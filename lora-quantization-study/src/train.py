@@ -10,7 +10,7 @@ set_seed(seed)
 
 name = "roberta-base"
 tok = AutoTokenizer.from_pretrained(name)
-ds = load_dataset("glue", "sst2").map(
+ds = load_dataset("nyu-mll/glue", "sst2").map(
     lambda b: tok(b["sentence"], truncation=True, max_length=128), batched=True)
 model = AutoModelForSequenceClassification.from_pretrained(name, num_labels=2)
 
