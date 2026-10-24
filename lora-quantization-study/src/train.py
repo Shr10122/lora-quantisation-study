@@ -25,11 +25,13 @@ def metrics(p):
     return {"accuracy": float((np.argmax(p.predictions, -1) == p.label_ids).mean())}
 
 args = TrainingArguments(
-    output_dir=f"out/{mode}_{seed}", per_device_train_batch_size=32,
+    num_train_epochs=epochs,
+    output_dir=f"out/{mode}_{seed}", per_device_train_batch_size=32,epochs=epochs,
     per_device_eval_batch_size=64, num_train_epochs=1, seed=seed, fp16=True,
     learning_rate=5e-4 if mode == "lora" else 2e-5,
     eval_strategy="no", save_strategy="no", report_to="none",
     label_names=["labels"])
+epochs = int(os.environ.get("EPOCHS", 1))
 
 trainer = Trainer(model=model, args=args, train_dataset=ds["train"],
                   eval_dataset=ds["validation"], compute_metrics=metrics,
@@ -41,5 +43,5 @@ os.makedirs("results", exist_ok=True)
 out = {"mode": mode, "seed": seed, "rank": rank if mode == "lora" else None,
        "accuracy": res["eval_accuracy"], "trainable_params": trainable,
        "peak_mem_gb": torch.cuda.max_memory_allocated() / 1e9}
-json.dump(out, open(f"results/{mode}_{seed}_r{rank}.json", "w"))
+json.dump(out,open(f"results/{mode}_{seed}_r{rank}_e{epochs}.json", "w"))
 print(out)
