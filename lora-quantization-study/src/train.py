@@ -39,14 +39,6 @@ trainer.train()
 res = trainer.evaluate()
 print(res)
 
-os.makedirs("results", exist_ok=True)
-out = {"mode": mode, "seed": seed, "rank": rank if mode == "lora" else None,
-       "epochs": epochs, "accuracy": res["eval_accuracy"],
-       "trainable_params": trainable,
-       "peak_mem_gb": torch.cuda.max_memory_allocated() / 1e9}
-json.dump(out, open(f"results/{mode}_{seed}_r{rank}_e{epochs}.json", "w"))
-print(out)
-
 if mode == "full":
     base = AutoModelForSequenceClassification.from_pretrained(name, num_labels=2)
     sv = {}
@@ -56,3 +48,35 @@ if mode == "full":
             sv[n] = torch.linalg.svdvals(w - w0).numpy()
             sv[n + ".W0"] = torch.linalg.svdvals(w0).numpy()
     np.savez(f"results/dW_sv_{mode}_{seed}_e{epochs}.npz", **sv)
+
+if mode == "full" and os.environ.get("TRUNC") == "1":
+    os.makedirs("results", exist_ok=True)
+    base = AutoModelForSequenceClassification.from_pretrained(name, num_labels=2)
+    base_p = dict(base.named_parameters())
+    params = dict(model.named_parameters())
+    targets = [n for n in params
+               if n.endswith(("attention.self.query.weight", "attention.self.value.weight"))]
+    orig = {n: params[n].detach().clone() for n in targets}  # fine-tuned weights
+    svd = {n: torch.linalg.svd(orig[n].float().cpu() - base_p[n].detach().float(),
+                               full_matrices=False) for n in targets}
+    curve = {}
+    for r in [0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 768]:
+        with torch.no_grad():
+            for n in targets:
+                U, S, Vh = svd[n]
+                approx = (U[:, :r] * S[:r]) @ Vh[:r]
+                new_w = base_p[n].detach().float() + approx
+                params[n].copy_(new_w.to(params[n].device, params[n].dtype))
+        curve[r] = trainer.evaluate()["eval_accuracy"]
+        print("rank", r, "accuracy", round(curve[r] * 100, 2))
+    with torch.no_grad():                      # restore the fine-tuned weights
+        for n in targets:
+            params[n].copy_(orig[n])
+    json.dump(curve, open(f"results/trunc_{seed}_e{epochs}.json", "w"))
+os.makedirs("results", exist_ok=True)
+out = {"mode": mode, "seed": seed, "rank": rank if mode == "lora" else None,
+       "epochs": epochs, "accuracy": res["eval_accuracy"],
+       "trainable_params": trainable,
+       "peak_mem_gb": torch.cuda.max_memory_allocated() / 1e9}
+json.dump(out, open(f"results/{mode}_{seed}_r{rank}_e{epochs}.json", "w"))
+print(out)
