@@ -7,6 +7,9 @@ from peft import LoraConfig, get_peft_model
 mode, seed = sys.argv[1], int(sys.argv[2])
 rank = int(sys.argv[3]) if len(sys.argv) > 3 else 8
 epochs = int(os.environ.get("EPOCHS", 1))
+target_set = os.environ.get("TARGETS", "qv")      # "qv" or "all" (LoRA only)
+tag = "_all" if (mode == "lora" and target_set == "all") else ""
+os.makedirs("results", exist_ok=True)
 set_seed(seed)
 
 name = "roberta-base"
@@ -16,11 +19,14 @@ ds = load_dataset("nyu-mll/glue", "sst2").map(
 model = AutoModelForSequenceClassification.from_pretrained(name, num_labels=2)
 
 if mode == "lora":
+    targets = (["query", "value"] if target_set == "qv"
+               else ["query", "key", "value", "output.dense", "intermediate.dense"])
     cfg = LoraConfig(r=rank, lora_alpha=rank, lora_dropout=0.1,
-                     target_modules=["query", "value"], task_type="SEQ_CLS")
+                     target_modules=targets, task_type="SEQ_CLS")
     model = get_peft_model(model, cfg)
 
 trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+print("trainable params:", trainable)
 
 def metrics(p):
     return {"accuracy": float((np.argmax(p.predictions, -1) == p.label_ids).mean())}
@@ -50,19 +56,18 @@ if mode == "full":
     np.savez(f"results/dW_sv_{mode}_{seed}_e{epochs}.npz", **sv)
 
 if mode == "full" and os.environ.get("TRUNC") == "1":
-    os.makedirs("results", exist_ok=True)
     base = AutoModelForSequenceClassification.from_pretrained(name, num_labels=2)
     base_p = dict(base.named_parameters())
     params = dict(model.named_parameters())
-    targets = [n for n in params
-               if n.endswith(("attention.self.query.weight", "attention.self.value.weight"))]
-    orig = {n: params[n].detach().clone() for n in targets}  # fine-tuned weights
+    qv_names = [n for n in params
+                if n.endswith(("attention.self.query.weight", "attention.self.value.weight"))]
+    orig = {n: params[n].detach().clone() for n in qv_names}  # fine-tuned weights
     svd = {n: torch.linalg.svd(orig[n].float().cpu() - base_p[n].detach().float(),
-                               full_matrices=False) for n in targets}
+                               full_matrices=False) for n in qv_names}
     curve = {}
     for r in [0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 768]:
         with torch.no_grad():
-            for n in targets:
+            for n in qv_names:
                 U, S, Vh = svd[n]
                 approx = (U[:, :r] * S[:r]) @ Vh[:r]
                 new_w = base_p[n].detach().float() + approx
@@ -70,13 +75,14 @@ if mode == "full" and os.environ.get("TRUNC") == "1":
         curve[r] = trainer.evaluate()["eval_accuracy"]
         print("rank", r, "accuracy", round(curve[r] * 100, 2))
     with torch.no_grad():                      # restore the fine-tuned weights
-        for n in targets:
+        for n in qv_names:
             params[n].copy_(orig[n])
     json.dump(curve, open(f"results/trunc_{seed}_e{epochs}.json", "w"))
-os.makedirs("results", exist_ok=True)
+
 out = {"mode": mode, "seed": seed, "rank": rank if mode == "lora" else None,
+       "targets": target_set if mode == "lora" else None,
        "epochs": epochs, "accuracy": res["eval_accuracy"],
        "trainable_params": trainable,
        "peak_mem_gb": torch.cuda.max_memory_allocated() / 1e9}
-json.dump(out, open(f"results/{mode}_{seed}_r{rank}_e{epochs}.json", "w"))
+json.dump(out, open(f"results/{mode}_{seed}_r{rank}_e{epochs}{tag}.json", "w"))
 print(out)
