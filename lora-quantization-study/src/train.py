@@ -46,3 +46,13 @@ out = {"mode": mode, "seed": seed, "rank": rank if mode == "lora" else None,
        "peak_mem_gb": torch.cuda.max_memory_allocated() / 1e9}
 json.dump(out, open(f"results/{mode}_{seed}_r{rank}_e{epochs}.json", "w"))
 print(out)
+
+if mode == "full":
+    base = AutoModelForSequenceClassification.from_pretrained(name, num_labels=2)
+    sv = {}
+    for (n, p), (_, p0) in zip(model.named_parameters(), base.named_parameters()):
+        if n.endswith(("attention.self.query.weight", "attention.self.value.weight")):
+            w, w0 = p.detach().float().cpu(), p0.detach().float().cpu()
+            sv[n] = torch.linalg.svdvals(w - w0).numpy()
+            sv[n + ".W0"] = torch.linalg.svdvals(w0).numpy()
+    np.savez(f"results/dW_sv_{mode}_{seed}_e{epochs}.npz", **sv)
