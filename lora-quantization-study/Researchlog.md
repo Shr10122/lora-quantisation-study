@@ -1,16 +1,5 @@
 # Research log
 
-How to write an entry (4 lines is enough, one entry per work session):
-
-- **Did:** what I ran or read
-- **Result:** the numbers or what I learned
-- **Surprise / mistake:** what I got wrong or didn't expect
-- **Next:** the one thing I'll do next
-
-Write predictions *before* running an experiment, never after seeing the numbers.
-
-Dates marked (approx.) were reconstructed afterwards. Correct them if you remember better.
-
 ## Open questions
 
 1. Is the fine-tuning update ΔW actually low-rank, and how does its spectrum compare with the pretrained weights?
